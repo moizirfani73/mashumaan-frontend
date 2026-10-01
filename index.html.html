@@ -159,8 +159,10 @@ section{padding:64px 0;}
 .hero-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;}
 
 /* ============ SHOP BY AGE ============ */
-.age-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
-@media(max-width:760px){.age-grid{grid-template-columns:repeat(2,1fr);}}
+.age-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;}
+@media(max-width:760px){.age-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.age-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;}
+@media(max-width:520px){.age-grid-3{grid-template-columns:repeat(1,minmax(0,1fr));}}
 .age-card{
   border:1px solid var(--line);padding:30px 18px;text-align:center;
   background:var(--paper);transition:border-color .2s, background .2s;
@@ -732,7 +734,7 @@ footer{background:var(--cream-deep);border-top:1px solid var(--line);padding-top
   <div class="lightbox-top"><button id="lightbox-close" aria-label="Close">&times;</button></div>
   <div class="lightbox-stage">
     <button class="gallery-arrow prev" id="lightbox-prev" aria-label="Previous image"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M15 6l-6 6 6 6"/></svg></button>
-    <img id="lightbox-img" src="" alt="">
+    <img id="lightbox-img" alt="" onerror="onImgError(this)">
     <button class="gallery-arrow next" id="lightbox-next" aria-label="Next image"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M9 6l6 6-6 6"/></svg></button>
   </div>
   <div class="lightbox-caption" id="lightbox-caption"></div>
@@ -798,7 +800,8 @@ async function stSet(key, value, shared=false){
    other static host, or the file opened directly). Update
    PRODUCTION_API_BASE_URL below if the backend's URL ever changes. <<<
    ============================================================ */
-const LOCAL_API_BASE_URL = 'https://mashumaan-frontend.onrender.com/api';
+const PRODUCTION_API_BASE_URL = 'https://mashumaan-backend.onrender.com/api';
+const LOCAL_API_BASE_URL = 'http://localhost:4000/api';
 const API_BASE_URL = (['localhost', '127.0.0.1', ''].includes(location.hostname))
   ? LOCAL_API_BASE_URL
   : PRODUCTION_API_BASE_URL;
@@ -875,6 +878,24 @@ const api = {
    its full backend URL, so all the existing IMG[...] lookups throughout the
    rendering code keep working unchanged. */
 const IMG = {};
+// Inline SVG placeholder — deliberately a data: URI, not a file path, so
+// there's nothing to break/hard-code if this file moves hosts.
+const PLACEHOLDER_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500">`+
+  `<rect width="400" height="500" fill="#F4EFE6"/>`+
+  `<text x="200" y="242" font-family="sans-serif" font-size="15" fill="#B9AE99" text-anchor="middle">Image</text>`+
+  `<text x="200" y="264" font-family="sans-serif" font-size="15" fill="#B9AE99" text-anchor="middle">unavailable</text>`+
+  `</svg>`
+);
+// Every <img> for a product photo calls this via onerror="onImgError(this)".
+// Swaps in the placeholder (once — guarded against onerror looping) and logs
+// the real failing URL to the console rather than failing silently.
+function onImgError(el){
+  if(el.dataset.fallbackApplied) return;
+  el.dataset.fallbackApplied = '1';
+  console.error('Mashumaan: product image failed to load ->', el.src);
+  el.src = PLACEHOLDER_IMG;
+}
 function registerImage(filename){
   if(!filename) return filename;
   // A Cloudinary (or any other cloud storage) upload is already a complete,
@@ -883,6 +904,14 @@ function registerImage(filename){
   // needs to be turned into a /uploads/... path on this API server.
   if(!IMG[filename]) IMG[filename] = /^https?:\/\//i.test(filename) ? filename : `${API_BASE_URL.replace(/\/api$/,'')}/uploads/${filename}`;
   return filename;
+}
+// Safe lookup for template literals: `${imgUrl(v.images.front)}` always
+// returns a usable src — the placeholder immediately if the backend simply
+// never had an image for this variant (null/empty), never the literal
+// string "undefined".
+function imgUrl(filename){
+  if(!filename) { console.error('Mashumaan: product variant has no image on file for', filename); return PLACEHOLDER_IMG; }
+  return IMG[filename] || PLACEHOLDER_IMG;
 }
 function registerProductImages(p){
   p.variants.forEach(v=>{ Object.values(v.images||{}).forEach(registerImage); });
@@ -1304,7 +1333,7 @@ function renderCartDrawer(){
     const v = p.variants.find(v=>v.color===line.color) || p.variants[0];
     return `
     <div class="cart-line">
-      <img src="${IMG[v.images.front]}" alt="${p.name}">
+      <img src="${imgUrl(v.images.front)}" alt="${p.name}" onerror="onImgError(this)">
       <div class="cl-info">
         <div class="cl-name">${p.name}</div>
         <div class="cl-meta">${v.color} · Size: ${line.size} Years</div>
@@ -1351,8 +1380,8 @@ function productCardHTML(p, forceColor){
   <div class="pcard">
     <div class="thumb">
       <a href="#/product/${p.id}${multiColor ? '?color='+variantSlug(dv) : ''}">
-        <img class="front" src="${IMG[dv.images.front]}" alt="${p.name} — ${dv.color}" loading="lazy">
-        <img class="back" src="${IMG[dv.images.back || dv.images.front]}" alt="" loading="lazy">
+        <img class="front" src="${imgUrl(dv.images.front)}" alt="${p.name} — ${dv.color}" loading="lazy" onerror="onImgError(this)">
+        <img class="back" src="${imgUrl(dv.images.back || dv.images.front)}" alt="" loading="lazy" onerror="onImgError(this)">
       </a>
       <div class="tags">
         ${p.isNew ? '<span class="tag new">NEW</span>' : ''}
@@ -1503,7 +1532,7 @@ function renderHome(app){
 
   <section class="wrap">
     <div class="section-head"><h2>Shop by Age Group</h2></div>
-    <div class="age-grid" style="grid-template-columns:repeat(3,1fr);">
+    <div class="age-grid-3">
       ${AGE_CATEGORIES.map(c=>`<a class="age-card" href="#/collection?ageCategory=${encodeURIComponent(c)}"><div class="yrs" style="font-size:22px;">${c}</div><div class="lbl">SHOP NOW</div></a>`).join('')}
     </div>
   </section>
@@ -1779,6 +1808,13 @@ function galleryList(p, v){
   if(p.sizechart){
     list.push({type:'sizechart', key:p.sizechart, label:'Size Chart', alt:`Mashumaan ${p.name} — Size Chart`});
   }
+  // A variant with no images saved at all (data issue, or a product still
+  // being set up in admin) must never leave the gallery empty — the page
+  // would throw trying to read gallery[0]. One placeholder slot keeps the
+  // layout intact; imgUrl(null) below renders it and logs why.
+  if(list.length===0){
+    list.push({type:'placeholder', key:null, label:'Photo', alt:`Mashumaan ${p.name} — ${v.color}`});
+  }
   return list;
 }
 async function renderProduct(app, param, query){
@@ -1822,7 +1858,7 @@ async function renderProduct(app, param, query){
   function galleryThumbsHTML(){
     return currentGallery().map((g,i)=>`
       <button class="${i===pdpState.activeIndex?'active':''}" data-img-idx="${i}">
-        <img src="${IMG[g.key]}" alt="${g.alt}">
+        <img src="${imgUrl(g.key)}" alt="${g.alt}" onerror="onImgError(this)">
         <span class="thumb-label">${g.label}</span>
       </button>`).join('');
   }
@@ -1864,7 +1900,7 @@ async function renderProduct(app, param, query){
         <div class="gallery-thumbs-v2" id="gallery-thumbs">${galleryThumbsHTML()}</div>
         <div class="gallery-main-wrap" id="gallery-main-wrap">
           <button class="gallery-arrow prev" id="gal-prev" aria-label="Previous image"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M15 6l-6 6 6 6"/></svg></button>
-          <img id="gallery-main-img" src="${IMG[gallery[0].key]}" alt="${gallery[0].alt}">
+          <img id="gallery-main-img" src="${imgUrl(gallery[0].key)}" alt="${gallery[0].alt}" onerror="onImgError(this)">
           <button class="gallery-arrow next" id="gal-next" aria-label="Next image"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M9 6l6 6-6 6"/></svg></button>
           <button class="gallery-expand" id="gal-expand" aria-label="Enlarge image"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/></svg></button>
         </div>
@@ -2025,7 +2061,7 @@ async function renderProduct(app, param, query){
   function paintGallery(){
     const gallery = currentGallery();
     const g = gallery[pdpState.activeIndex];
-    document.getElementById('gallery-main-img').src = IMG[g.key];
+    document.getElementById('gallery-main-img').src = imgUrl(g.key);
     document.getElementById('gallery-main-img').alt = g.alt;
     document.querySelectorAll('#gallery-thumbs button').forEach((b,i)=>b.classList.toggle('active', i===pdpState.activeIndex));
     document.querySelectorAll('.gallery-dots span').forEach((d,i)=>d.classList.toggle('active', i===pdpState.activeIndex));
@@ -2249,7 +2285,7 @@ function renderCartPage(app){
           const p = getProduct(line.productId); if(!p) return '';
           const v = p.variants.find(v=>v.color===line.color) || p.variants[0];
           return `<div class="cart-line" style="align-items:flex-start;">
-            <img src="${IMG[v.images.front]}" alt="${p.name}" style="width:100px;height:126px;">
+            <img src="${imgUrl(v.images.front)}" alt="${p.name}" style="width:100px;height:126px;" onerror="onImgError(this)">
             <div class="cl-info">
               <div class="cl-name" style="font-size:15px;">${p.name}</div>
               <div class="cl-meta">${v.color} · Size: ${line.size} Years</div>
@@ -2311,7 +2347,7 @@ function renderWishlistPage(app){
         const v = p.variants[0];
         const size = ALL_SIZES.find(s=>stockFor(v,s));
         return `<div class="cart-line" style="align-items:flex-start;">
-          <img src="${IMG[v.images.front]}" alt="${p.name}" style="width:100px;height:126px;">
+          <img src="${imgUrl(v.images.front)}" alt="${p.name}" style="width:100px;height:126px;" onerror="onImgError(this)">
           <div class="cl-info">
             <div class="cl-name" style="font-size:15px;"><a href="#/product/${p.id}">${p.name}</a></div>
             <div class="cl-meta">${p.variants.length>1 ? p.variants.map(x=>x.color).join(' / ') : v.color} · ${inStock(p)?'In Stock':'Out of Stock'}</div>
@@ -2609,7 +2645,7 @@ function renderCheckout(app){
           const p = getProduct(line.productId);
           const v = p.variants.find(v=>v.color===line.color) || p.variants[0];
           return `<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);">
-            <img src="${IMG[v.images.front]}" style="width:52px;height:66px;object-fit:cover;">
+            <img src="${imgUrl(v.images.front)}" style="width:52px;height:66px;object-fit:cover;" onerror="onImgError(this)">
             <div style="flex:1;font-size:12.5px;">
               <div>${p.name}</div>
               <div style="color:var(--ink-soft);margin-top:3px;">${v.color} · Size ${line.size} · Qty ${line.qty}</div>
@@ -3051,7 +3087,7 @@ async function renderAdmin(app){
           const dv = p.variants[0];
           return `
         <tr data-row="${p.id}" style="${p.deleted?'opacity:.45;':''}">
-          <td><img src="${IMG[dv.images.front]}" alt=""></td>
+          <td><img src="${imgUrl(dv.images.front)}" alt="" onerror="onImgError(this)"></td>
           <td>${p.name}${p.deleted?' <span style="color:var(--rose-deep);font-size:11px;">(deleted)</span>':''}</td>
           <td style="font-size:11px;color:var(--ink-soft);">${p.variants.map(v=>v.color).join(', ')}<br>${p.variants.length} SKU${p.variants.length===1?'':'s'}</td>
           <td>${fmt(displayPrice(dv))}${p.variants.some(isOnSale)?`<div style="font-size:11px;color:var(--rose-deep);">some on sale</div>`:''}</td>
@@ -3426,7 +3462,7 @@ async function renderAdmin(app){
             const src = previewSrc(v.images[t.key]);
             return `
             <div style="text-align:center;">
-              <div style="width:100%;aspect-ratio:3/4;background:var(--cream-deep);border:1px solid var(--line);overflow:hidden;margin-bottom:4px;" class="v-img-preview" data-vimgtype="${t.key}">${src ? `<img src="${src}" style="width:100%;height:100%;object-fit:cover;">` : ''}</div>
+              <div style="width:100%;aspect-ratio:3/4;background:var(--cream-deep);border:1px solid var(--line);overflow:hidden;margin-bottom:4px;" class="v-img-preview" data-vimgtype="${t.key}">${src ? `<img src="${src}" style="width:100%;height:100%;object-fit:cover;" onerror="onImgError(this)">` : ''}</div>
               <label style="font-size:9.5px;color:var(--ink-soft);display:block;">${t.label}</label>
               <input type="file" accept="image/*" class="v-img-input" data-vimgtype="${t.key}" style="font-size:9px;width:100%;">
             </div>`;
@@ -3650,7 +3686,7 @@ function closeLightbox(){ document.getElementById('lightbox-overlay').classList.
 function paintLightbox(){
   const {images, index} = lightboxState;
   const img = images[index];
-  document.getElementById('lightbox-img').src = img.url || IMG[img.key];
+  document.getElementById('lightbox-img').src = img.url || imgUrl(img.key);
   document.getElementById('lightbox-img').alt = img.alt;
   document.getElementById('lightbox-caption').textContent = `${img.label} — ${index+1} of ${images.length}`;
 }
